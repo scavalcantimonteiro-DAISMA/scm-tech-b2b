@@ -15,7 +15,16 @@ export interface User {
   };
 }
 
-export type LeadStatus = 'NOVO' | 'TENTANDO' | 'NEGOCIACAO' | 'AGENDADO' | 'FECHADO' | 'SEM_INTERESSE';
+export type LeadStatus = 
+  | 'NOVO' 
+  | 'CONTATO_REALIZADO' 
+  | 'TENTANDO' 
+  | 'NEGOCIACAO' 
+  | 'AGENDADO' 
+  | 'JA_TEM_SKY' 
+  | 'OUTRA_OPERADORA' 
+  | 'FECHADO' 
+  | 'SEM_INTERESSE';
 
 export interface LeadNote {
   id: string;
@@ -49,6 +58,7 @@ export interface Lead {
   skySolution: string;
   cnae: string;
   status: LeadStatus;
+  currentOperator?: string | null;
   visitDate: string | null;
   visitNotes: string | null;
   callCount: number;
@@ -78,9 +88,11 @@ export interface RamoConfig {
 export interface DashboardStats {
   total: number;
   novos: number;
-  tentando: number;
+  contatoRealizado: number;
   negociacao: number;
   agendados: number;
+  jaTemSky: number;
+  outraOperadora: number;
   fechados: number;
   semInteresse: number;
   totalLigacoes: number;

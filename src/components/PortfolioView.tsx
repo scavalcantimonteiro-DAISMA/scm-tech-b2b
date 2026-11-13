@@ -19,11 +19,15 @@ import {
   Trash2,
   Users,
   Eye,
-  StickyNote
+  StickyNote,
+  Radio,
+  Sparkles,
+  PhoneCall
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { api } from '../services/api';
 import { DashboardStats, Lead, LeadStatus, User } from '../types';
+import { LeadOutcomeModal } from './LeadOutcomeModal';
 
 interface PortfolioViewProps {
   currentUser: User;
@@ -34,11 +38,14 @@ interface PortfolioViewProps {
 
 const STATUS_BADGES: Record<LeadStatus, { label: string; bg: string; text: string; border: string }> = {
   NOVO: { label: 'Novo (A Ligar)', bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-300' },
+  CONTATO_REALIZADO: { label: '📞 Contato Realizado', bg: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-300' },
   TENTANDO: { label: 'Tentando Contato', bg: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-300' },
-  NEGOCIACAO: { label: 'Em Negociação', bg: 'bg-blue-50', text: 'text-blue-800', border: 'border-blue-300' },
-  AGENDADO: { label: 'Visita Agendada', bg: 'bg-emerald-50', text: 'text-emerald-800', border: 'border-emerald-300' },
-  FECHADO: { label: 'Fechado (Cliente SKY)', bg: 'bg-purple-50', text: 'text-purple-800', border: 'border-purple-300' },
-  SEM_INTERESSE: { label: 'Sem Interesse', bg: 'bg-rose-50', text: 'text-rose-800', border: 'border-rose-300' }
+  NEGOCIACAO: { label: '🔵 Em Negociação', bg: 'bg-blue-50', text: 'text-blue-800', border: 'border-blue-300' },
+  AGENDADO: { label: '🟢 Visita Agendada', bg: 'bg-emerald-50', text: 'text-emerald-800', border: 'border-emerald-300' },
+  JA_TEM_SKY: { label: '📡 Já tem SKY', bg: 'bg-sky-50', text: 'text-sky-800', border: 'border-sky-300' },
+  OUTRA_OPERADORA: { label: '🏢 Outra Operadora', bg: 'bg-orange-50', text: 'text-orange-800', border: 'border-orange-300' },
+  FECHADO: { label: '🏆 Fechado (Cliente SKY)', bg: 'bg-purple-50', text: 'text-purple-800', border: 'border-purple-300' },
+  SEM_INTERESSE: { label: '🔴 Sem Interesse', bg: 'bg-rose-50', text: 'text-rose-800', border: 'border-rose-300' }
 };
 
 export const PortfolioView: React.FC<PortfolioViewProps> = ({
@@ -53,6 +60,9 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [ramoFilter, setRamoFilter] = useState<string>('ALL');
+
+  // Modal de desfecho comercial (contato, agendamento, operadora, fechamento)
+  const [outcomeModalLead, setOutcomeModalLead] = useState<Lead | null>(null);
 
   // Controle de Supervisor para Adm
   const [targetUserId, setTargetUserId] = useState<string>(currentUser.id);
@@ -99,9 +109,9 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
     }
   };
 
-  const handleStatusChange = async (lead: Lead, newStatus: LeadStatus) => {
-    if (newStatus === 'AGENDADO') {
-      onRequestSchedule(lead);
+  const handleQuickStatusChange = async (lead: Lead, newStatus: LeadStatus) => {
+    if (newStatus === 'AGENDADO' || newStatus === 'OUTRA_OPERADORA' || newStatus === 'JA_TEM_SKY' || newStatus === 'FECHADO' || newStatus === 'CONTATO_REALIZADO') {
+      setOutcomeModalLead(lead);
       return;
     }
 
@@ -111,16 +121,6 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
       onLeadUpdated();
     } catch (err: any) {
       alert(err.message || 'Erro ao alterar status');
-    }
-  };
-
-  const handleRecordCall = async (lead: Lead) => {
-    try {
-      await api.recordCall(lead.id);
-      loadPortfolioData();
-      onLeadUpdated();
-    } catch (err: any) {
-      alert(err.message || 'Erro ao registrar ligação');
     }
   };
 
@@ -140,7 +140,7 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
   const openWhatsApp = (lead: Lead) => {
     const cleanPhone = lead.whatsapp.replace(/\D/g, '');
     const message = encodeURIComponent(
-      `Olá, tudo bem? Sou ${currentUser.name} da equipe corporativa da SKY Brasil.\n\n` +
+      `Olá, tudo bem? Sou ${currentUser.name} da equipe corporativa da SKY Brasil / SCM TECH.\n\n` +
       `Entro em contato com o ${lead.tradeName} a respeito das soluções corporativas de TV em HD e conectividade para ${lead.ramoLabel}.\n\n` +
       `Gostaria de falar com o responsável (${lead.contactPerson}) para apresentar uma proposta de redução de custos com pacotes oficiais SKY.`
     );
@@ -158,6 +158,7 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
       'Razão Social': l.companyName,
       'Ramo': l.ramoLabel,
       'Status': STATUS_BADGES[l.status]?.label || l.status,
+      'Operadora Atual': l.currentOperator || (l.status === 'JA_TEM_SKY' ? 'SKY Brasil' : 'Não informada'),
       'Telefone Fixo': l.phone,
       'WhatsApp': l.whatsapp,
       'E-mail': l.email,
@@ -170,6 +171,7 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
       'Decisor': l.contactPerson,
       'Total Ligações Feitas': l.callCount || 0,
       'Data da Visita': l.visitDate ? new Date(l.visitDate).toLocaleString('pt-BR') : 'Não agendada',
+      'Observações da Visita': l.visitNotes || '',
       'Vendedor Responsável': l.userName || 'N/A'
     }));
 
@@ -193,8 +195,8 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
             <span className="text-2xl font-black text-amber-600 mt-1 block">{stats.novos}</span>
           </div>
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-            <span className="text-xs font-bold text-blue-600 uppercase tracking-wider block">Tentando Contato</span>
-            <span className="text-2xl font-black text-blue-600 mt-1 block">{stats.tentando}</span>
+            <span className="text-xs font-bold text-blue-600 uppercase tracking-wider block">Contatos Feitos</span>
+            <span className="text-2xl font-black text-blue-600 mt-1 block">{(stats.contatoRealizado || 0) + (stats.negociacao || 0)}</span>
           </div>
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
             <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider block">Visitas Agendadas</span>
@@ -205,8 +207,8 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
             <span className="text-2xl font-black text-purple-600 mt-1 block">{stats.fechados}</span>
           </div>
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Ligações Realizadas</span>
-            <span className="text-2xl font-black text-slate-800 mt-1 block">{stats.totalLigacoes}</span>
+            <span className="text-xs font-bold text-orange-600 uppercase tracking-wider block">Já tem SKY / Outra</span>
+            <span className="text-2xl font-black text-orange-600 mt-1 block">{(stats.jaTemSky || 0) + (stats.outraOperadora || 0)}</span>
           </div>
         </div>
       )}
@@ -251,35 +253,37 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Buscar por nome, telefone, cidade ou CNPJ..."
-              className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+              placeholder="Buscar por nome, CNPJ, bairro ou telefone..."
+              className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 text-xs bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 transition"
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
             {/* Ramo Filter */}
             <select
               value={ramoFilter}
               onChange={(e) => setRamoFilter(e.target.value)}
-              className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
+              className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
             >
               <option value="ALL">Todos os Ramos</option>
-              <option value="hoteis">Hotéis & Pousadas</option>
-              <option value="hospitais">Hospitais & Clínicas</option>
-              <option value="bares_restaurantes">Bares & Restaurantes</option>
+              <option value="hoteis">🏨 Hotéis & Pousadas</option>
+              <option value="hospitais">🏥 Hospitais & Clínicas</option>
+              <option value="bares_restaurantes">🍽️ Bares & Restaurantes</option>
             </select>
 
             {/* Status Filter */}
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
+              className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
             >
               <option value="ALL">Todos os Status</option>
               <option value="NOVO">⚪ Novo (A Ligar)</option>
-              <option value="TENTANDO">🟡 Tentando Contato</option>
-              <option value="NEGOCIACAO">🔵 Em Negociação</option>
+              <option value="CONTATO_REALIZADO">📞 Contato Realizado</option>
               <option value="AGENDADO">🟢 Visita Agendada</option>
+              <option value="JA_TEM_SKY">📡 Já tem SKY</option>
+              <option value="OUTRA_OPERADORA">🏢 Já tem Outra Operadora</option>
+              <option value="NEGOCIACAO">🔵 Em Negociação</option>
               <option value="FECHADO">🏆 Fechado (Cliente SKY)</option>
               <option value="SEM_INTERESSE">🔴 Sem Interesse</option>
             </select>
@@ -301,7 +305,7 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
       {/* Leads List / Cards */}
       {loading ? (
         <div className="p-12 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">
-          <div className="inline-block w-8 h-8 border-3 border-red-600 border-t-transparent rounded-full animate-spin mb-3"></div>
+          <div className="inline-block w-8 h-8 border-3 border-amber-500 border-t-transparent rounded-full animate-spin mb-3"></div>
           <p className="text-sm font-medium">Carregando carteira de leads...</p>
         </div>
       ) : leads.length === 0 ? (
@@ -331,6 +335,15 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
                       <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${statusConfig.bg} ${statusConfig.text} ${statusConfig.border}`}>
                         {statusConfig.label}
                       </span>
+
+                      {/* Operadora Atual (se preenchida) */}
+                      {lead.currentOperator && (
+                        <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-orange-50 text-orange-800 border border-orange-200">
+                          Operadora: {lead.currentOperator}
+                        </span>
+                      )}
+
+                      {/* Visita Agendada */}
                       {lead.status === 'AGENDADO' && lead.visitDate && (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-600 text-white shadow-sm">
                           <CalendarCheck className="w-3.5 h-3.5" />
@@ -365,7 +378,7 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
                         <span>• Última em: {new Date(lead.lastCallAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</span>
                       )}
                       {lead.notes && lead.notes.length > 0 && (
-                        <span className="text-blue-600 font-medium">
+                        <span className="text-amber-800 font-medium">
                           • {lead.notes.length} anotação(ões) registrada(s)
                         </span>
                       )}
@@ -374,15 +387,15 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
 
                   {/* Ações Comerciais Imediatas */}
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
-                    {/* Botão Registrar Ligação */}
+                    {/* Botão Principal: Registrar Contato / Desfecho (SUPER DESTAQUE) */}
                     <button
                       type="button"
-                      onClick={() => handleRecordCall(lead)}
-                      title="Registrar que realizou uma ligação agora"
-                      className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                      onClick={() => setOutcomeModalLead(lead)}
+                      title="Registrar se falou com o cliente, agendou visita, operadora atual ou fechamento"
+                      className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black transition flex items-center gap-1.5 shadow-sm cursor-pointer"
                     >
-                      <Phone className="w-3.5 h-3.5 text-amber-600" />
-                      <span>Ligou ({lead.callCount || 0})</span>
+                      <CheckCircle2 className="w-4 h-4 text-slate-950" />
+                      <span>Registrar Contato / Desfecho</span>
                     </button>
 
                     {/* Botão Ligar no Telefone Fixo */}
@@ -429,13 +442,15 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
                     {/* Seletor Rápido de Status */}
                     <select
                       value={lead.status}
-                      onChange={(e) => handleStatusChange(lead, e.target.value as LeadStatus)}
-                      className="px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"
+                      onChange={(e) => handleQuickStatusChange(lead, e.target.value as LeadStatus)}
+                      className="px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
                     >
                       <option value="NOVO">⚪ Novo</option>
-                      <option value="TENTANDO">🟡 Tentando Contato</option>
-                      <option value="NEGOCIACAO">🔵 Em Negociação</option>
+                      <option value="CONTATO_REALIZADO">📞 Contato Realizado</option>
                       <option value="AGENDADO">🟢 Agendar Visita</option>
+                      <option value="JA_TEM_SKY">📡 Já tem SKY</option>
+                      <option value="OUTRA_OPERADORA">🏢 Outra Operadora</option>
+                      <option value="NEGOCIACAO">🔵 Em Negociação</option>
                       <option value="FECHADO">🏆 Fechado (Cliente)</option>
                       <option value="SEM_INTERESSE">🔴 Sem Interesse</option>
                     </select>
@@ -455,6 +470,19 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
             );
           })}
         </div>
+      )}
+
+      {/* Modal de Desfecho Comercial */}
+      {outcomeModalLead && (
+        <LeadOutcomeModal
+          lead={outcomeModalLead}
+          onClose={() => setOutcomeModalLead(null)}
+          onSuccess={() => {
+            setOutcomeModalLead(null);
+            loadPortfolioData();
+            onLeadUpdated();
+          }}
+        />
       )}
     </div>
   );

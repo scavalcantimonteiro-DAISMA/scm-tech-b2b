@@ -76,9 +76,11 @@ router.get('/stats', (req, res) => {
   const stats = {
     total: leads.length,
     novos: leads.filter(l => l.status === 'NOVO').length,
-    tentando: leads.filter(l => l.status === 'TENTANDO').length,
+    contatoRealizado: leads.filter(l => l.status === 'CONTATO_REALIZADO' || l.status === 'TENTANDO').length,
     negociacao: leads.filter(l => l.status === 'NEGOCIACAO').length,
     agendados: leads.filter(l => l.status === 'AGENDADO').length,
+    jaTemSky: leads.filter(l => l.status === 'JA_TEM_SKY').length,
+    outraOperadora: leads.filter(l => l.status === 'OUTRA_OPERADORA').length,
     fechados: leads.filter(l => l.status === 'FECHADO').length,
     semInteresse: leads.filter(l => l.status === 'SEM_INTERESSE').length,
     totalLigacoes: leads.reduce((acc, l) => acc + (l.callCount || 0), 0)
@@ -152,7 +154,7 @@ router.post('/import', async (req, res) => {
 router.put('/:id/status', async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, visitDate, visitNotes, note } = req.body;
+    const { status, visitDate, visitNotes, note, currentOperator } = req.body;
     const db = getDb();
 
     const lead = db.leads.find(l => l.id === id);
@@ -168,6 +170,10 @@ router.put('/:id/status', async (req, res) => {
     const previousStatus = lead.status;
     lead.status = status;
     lead.updatedAt = new Date().toISOString();
+
+    if (currentOperator !== undefined) {
+      lead.currentOperator = currentOperator;
+    }
 
     if (status === 'AGENDADO') {
       lead.visitDate = visitDate || lead.visitDate || new Date().toISOString();

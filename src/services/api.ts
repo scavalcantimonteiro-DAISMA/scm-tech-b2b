@@ -134,6 +134,7 @@ export const api = {
 
   async updateLeadStatus(id: string, data: {
     status: LeadStatus;
+    currentOperator?: string | null;
     visitDate?: string | null;
     visitNotes?: string | null;
     note?: string;
