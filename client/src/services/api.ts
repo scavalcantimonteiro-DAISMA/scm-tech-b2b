@@ -203,5 +203,46 @@ export const api = {
     });
     if (!res.ok) throw new Error('Falha ao minerar leads');
     return res.json();
+  },
+
+  // Sistema de Persistência & Backup
+  async getSystemStatus(): Promise<{ ok: boolean; persistence: string; usersCount: number; leadsCount: number; isVercel: boolean }> {
+    const res = await fetch(`${BASE_URL}/system/status`);
+    if (!res.ok) throw new Error('Falha ao verificar status do sistema');
+    return res.json();
+  },
+
+  async getBackup(): Promise<any> {
+    const res = await fetch(`${BASE_URL}/system/backup`, {
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) throw new Error('Falha ao baixar backup do sistema');
+    return res.json();
+  },
+
+  async restoreBackup(backupData: any): Promise<{ message: string; usersCount: number; leadsCount: number }> {
+    const res = await fetch(`${BASE_URL}/system/restore`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(backupData)
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Falha ao restaurar backup');
+    }
+    return res.json();
+  },
+
+  async syncSystem(data: { users?: any[]; leads?: any[] }): Promise<{ message: string; usersCount: number; leadsCount: number }> {
+    const res = await fetch(`${BASE_URL}/system/sync`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Falha ao sincronizar dados');
+    }
+    return res.json();
   }
 };

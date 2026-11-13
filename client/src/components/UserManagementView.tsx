@@ -35,6 +35,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
   // Modal para trocar senha
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState('');
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
   useEffect(() => {
     loadUsers();
@@ -44,11 +45,73 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
     setLoading(true);
     try {
       const data = await api.getUsers();
+
+      // Recupera backup do navegador
+      const localBackupRaw = localStorage.getItem('sky_b2b_vault_backup');
+      if (localBackupRaw) {
+        try {
+          const localBackup = JSON.parse(localBackupRaw);
+          if (localBackup && Array.isArray(localBackup.users) && localBackup.users.length > data.length) {
+            // Cold start detectado! Auto-sincroniza vendedores salvos no navegador para o servidor
+            setSyncStatus('Sincronizando vendedores salvos com o servidor...');
+            await api.syncSystem({ users: localBackup.users });
+            const reloaded = await api.getUsers();
+            setUsers(reloaded);
+            setSyncStatus('✅ Vendedores sincronizados com sucesso!');
+            setLoading(false);
+            return;
+          }
+        } catch {}
+      }
+
       setUsers(data);
+
+      // Atualiza backup silencioso local do Admin
+      try {
+        const fullBackup = await api.getBackup();
+        localStorage.setItem('sky_b2b_vault_backup', JSON.stringify(fullBackup));
+      } catch {}
     } catch (err) {
       console.error('Erro ao listar usuários:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDownloadBackup = async () => {
+    try {
+      const backup = await api.getBackup();
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `backup_equipe_sky_b2b_${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert('Erro ao baixar backup: ' + err.message);
+    }
+  };
+
+  const handleUploadBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (!parsed || !Array.isArray(parsed.users)) {
+        alert('Arquivo de backup inválido.');
+        return;
+      }
+      await api.restoreBackup(parsed);
+      localStorage.setItem('sky_b2b_vault_backup', JSON.stringify(parsed));
+      alert(`Backup restaurado com sucesso! ${parsed.users.length} usuários carregados.`);
+      loadUsers();
+    } catch (err: any) {
+      alert('Erro ao restaurar backup: ' + err.message);
+    } finally {
+      e.target.value = '';
     }
   };
 
@@ -131,9 +194,14 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
       <div className="bg-gradient-to-r from-slate-900 to-amber-950 p-6 sm:p-8 rounded-2xl border border-amber-500/30 text-white shadow-xl">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold mb-3">
-              <ShieldCheck className="w-4 h-4" />
-              Painel de Controle do Administrador
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold">
+                <ShieldCheck className="w-4 h-4" />
+                Painel de Controle do Administrador
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold">
+                🛡️ Persistência Protegida Ativa
+              </span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
               Gestão de Usuários & Equipe de Vendas
@@ -141,11 +209,43 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
             <p className="text-slate-300 text-sm mt-1 max-w-2xl">
               Crie logins e senhas para os vendedores da sua equipe SKY. Cada vendedor terá acesso isolado à sua própria carteira, evitando qualquer sobreposição ou confusão.
             </p>
+
+            {syncStatus && (
+              <p className="mt-2 text-xs font-semibold text-emerald-300 animate-fadeIn">
+                {syncStatus}
+              </p>
+            )}
           </div>
 
-          <div className="bg-slate-950/70 border border-slate-700 rounded-xl p-4 text-center shrink-0">
-            <span className="text-xs text-slate-400 font-medium block">Usuários Cadastrados</span>
-            <span className="text-3xl font-black text-amber-400 block mt-0.5">{users.length}</span>
+          <div className="flex flex-col sm:flex-row items-center gap-3 shrink-0">
+            <div className="bg-slate-950/70 border border-slate-700 rounded-xl p-4 text-center w-full sm:w-auto">
+              <span className="text-xs text-slate-400 font-medium block">Usuários Cadastrados</span>
+              <span className="text-3xl font-black text-amber-400 block mt-0.5">{users.length}</span>
+            </div>
+
+            <div className="flex sm:flex-col gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={handleDownloadBackup}
+                title="Baixar arquivo de backup com todos os usuários e carteiras"
+                className="flex-1 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-bold text-white transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                💾 Baixar Backup
+              </button>
+
+              <label
+                title="Restaurar usuários a partir de um backup .json"
+                className="flex-1 px-3 py-2 rounded-xl bg-amber-600/30 hover:bg-amber-600/50 border border-amber-500/40 text-xs font-bold text-amber-200 transition flex items-center justify-center gap-1.5 cursor-pointer text-center"
+              >
+                🔄 Restaurar
+                <input
+                  type="file"
+                  accept=".json"
+                  onChange={handleUploadBackup}
+                  className="hidden"
+                />
+              </label>
+            </div>
           </div>
         </div>
       </div>
