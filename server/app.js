@@ -35,9 +35,10 @@ app.use('/api/users', usersRoutes);
 app.use('/api/leads', leadsRoutes);
 app.use('/api/search', searchRoutes);
 
-// Servir frontend compilado em produção (se existir a pasta dist)
-const clientDist = path.join(__dirname, '..', 'client', 'dist');
+// Servir frontend compilado em produção (pasta dist)
+const clientDist = path.join(__dirname, '..', 'dist');
 app.use(express.static(clientDist));
+app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
 
 // Fallback para SPA no Express 5
 app.use((req, res, next) => {
