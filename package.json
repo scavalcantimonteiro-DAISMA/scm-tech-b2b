@@ -1,0 +1,33 @@
+{
+  "name": "sky-b2b-prospeccao",
+  "version": "1.0.0",
+  "description": "Sistema de Prospecção Ativa B2B SKY - Hotéis, Hospitais e Grandes Bares",
+  "main": "server/index.js",
+  "type": "module",
+  "scripts": {
+    "server": "node server/index.js",
+    "client": "npm --prefix client run dev",
+    "build": "npm --prefix client run build",
+    "dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,CLIENT\" -c \"blue.bold,magenta.bold\" \"node server/index.js\" \"npm --prefix client run dev\"",
+    "start": "node server/index.js"
+  },
+  "keywords": [
+    "sky",
+    "b2b",
+    "leads",
+    "prospeccao",
+    "hoteis",
+    "hospitais",
+    "bares"
+  ],
+  "author": "SKY B2B",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "concurrently": "^10.0.7",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.10",
+    "express": "^5.3.0",
+    "jsonwebtoken": "^9.0.3"
+  }
+}
