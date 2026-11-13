@@ -15,20 +15,71 @@ const DB_PATH = process.env.VERCEL
 // Memória em cache para performance ultrarrápida
 let dbCache = null;
 
+// Configuração persistente oficial Upstash KV / Redis
+const DEFAULT_KV_URL = 'https://excited-satyr-201088.upstash.io';
+const DEFAULT_KV_TOKEN = 'gQAAAAAAAxGAAAIgcDE3ZjEwNWVkMjY4N2I0NzYyOWExZThiMWY3OTc5Y2MyMg';
+
+const KV_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || DEFAULT_KV_URL;
+const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || DEFAULT_KV_TOKEN;
+const KV_KEY = 'sky_b2b_database';
+
+async function fetchFromKv() {
+  if (!KV_URL || !KV_TOKEN) return null;
+  try {
+    const res = await fetch(`${KV_URL}/get/${KV_KEY}`, {
+      headers: { Authorization: `Bearer ${KV_TOKEN}` }
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data && data.result) {
+      const parsed = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+      if (parsed && Array.isArray(parsed.users)) {
+        console.log(`☁️ [Upstash KV] Carregados ${parsed.users.length} usuários e ${parsed.leads?.length || 0} leads da nuvem.`);
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('Aviso: falha ao ler do Upstash KV:', err.message);
+  }
+  return null;
+}
+
+async function saveToKv(data) {
+  if (!KV_URL || !KV_TOKEN) return;
+  try {
+    const payload = typeof data === 'string' ? data : JSON.stringify(data);
+    const res = await fetch(`${KV_URL}/set/${KV_KEY}`, {
+      method: 'POST',
+      headers: { 
+        Authorization: `Bearer ${KV_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: payload
+    });
+    if (res.ok) {
+      console.log(`☁️ [Upstash KV] Gravado na nuvem permanente com sucesso (${data.users?.length || 0} usuários).`);
+    }
+  } catch (err) {
+    console.warn('Aviso: falha ao gravar no Upstash KV:', err.message);
+  }
+}
+
 // Garante que o banco de dados exista e esteja inicializado
 export async function initDb() {
   if (dbCache) return dbCache;
 
-  try {
-    const rawData = await fs.readFile(DB_PATH, 'utf-8');
-    dbCache = JSON.parse(rawData);
-  } catch {
-    // Se não encontrou o arquivo físico (ex: primeira execução no Vercel serverless), usa o initialDatabase embutido
-    dbCache = JSON.parse(JSON.stringify(initialDatabase));
+  // 1. Tenta carregar do Upstash KV primeiro (persistência eterna na nuvem)
+  const kvData = await fetchFromKv();
+  if (kvData) {
+    dbCache = kvData;
+  } else {
+    // 2. Tenta carregar do disco local / /tmp
     try {
-      await saveDb();
-    } catch (saveErr) {
-      console.warn('Aviso: não foi possível gravar em DB_PATH, mantendo em memória:', saveErr.message);
+      const rawData = await fs.readFile(DB_PATH, 'utf-8');
+      dbCache = JSON.parse(rawData);
+    } catch {
+      // 3. Fallback para initialDatabase embutido
+      dbCache = JSON.parse(JSON.stringify(initialDatabase));
     }
   }
 
@@ -36,7 +87,7 @@ export async function initDb() {
   const admExists = dbCache.users.find(u => u.username.toLowerCase() === 'adm');
   if (!admExists) {
     const hashedPass = await bcrypt.hash('S@ulo160605', 10);
-    dbCache.users.push({
+    dbCache.users.unshift({
       id: 'usr_admin_default',
       name: 'Saulo (Administrador SKY)',
       username: 'Adm',
@@ -45,9 +96,12 @@ export async function initDb() {
       active: true,
       createdAt: new Date().toISOString()
     });
-    try {
-      await saveDb();
-    } catch {}
+    await saveDb();
+  } else {
+    // Se ainda não estava no KV, garante primeira sincronização para a nuvem
+    if (!kvData) {
+      await saveToKv(dbCache);
+    }
   }
 
   return dbCache;
@@ -55,12 +109,61 @@ export async function initDb() {
 
 export async function saveDb() {
   if (!dbCache) return;
-  const tempPath = `${DB_PATH}.tmp`;
-  await fs.writeFile(tempPath, JSON.stringify(dbCache, null, 2), 'utf-8');
-  await fs.rename(tempPath, DB_PATH);
+
+  // 1. Salva no Upstash KV com await para garantir sincronização antes de responder
+  await saveToKv(dbCache);
+
+  // 2. Salva no disco
+  try {
+    const tempPath = `${DB_PATH}.tmp`;
+    await fs.writeFile(tempPath, JSON.stringify(dbCache, null, 2), 'utf-8');
+    await fs.rename(tempPath, DB_PATH);
+  } catch (err) {
+    // Em ambientes serverless estritos, continua funcionando na nuvem e em memória
+  }
 }
 
 export function getDb() {
+  return dbCache;
+}
+
+// Sincroniza dados do cliente para o servidor (evita perda em cold starts)
+export async function syncDb({ users = [], leads = [] }) {
+  if (!dbCache) await initDb();
+  let changed = false;
+
+  if (Array.isArray(users)) {
+    for (const u of users) {
+      if (!u || !u.username) continue;
+      const idx = dbCache.users.findIndex(x => x.username.toLowerCase() === u.username.toLowerCase());
+      if (idx === -1) {
+        dbCache.users.push(u);
+        changed = true;
+      } else {
+        // Atualiza hash se estiver presente
+        if (u.passwordHash && !dbCache.users[idx].passwordHash) {
+          dbCache.users[idx].passwordHash = u.passwordHash;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(leads)) {
+    for (const l of leads) {
+      if (!l || !l.id) continue;
+      const idx = dbCache.leads.findIndex(x => x.id === l.id);
+      if (idx === -1) {
+        dbCache.leads.push(l);
+        changed = true;
+      }
+    }
+  }
+
+  if (changed) {
+    await saveDb();
+  }
+
   return dbCache;
 }
 
