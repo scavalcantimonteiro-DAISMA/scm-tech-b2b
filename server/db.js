@@ -15,9 +15,12 @@ const DB_PATH = process.env.VERCEL
 // Memória em cache para performance ultrarrápida
 let dbCache = null;
 
-// Helpers para integração com Vercel KV / Upstash Redis (caso configurado na Vercel)
-const KV_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+// Configuração persistente oficial Upstash KV / Redis
+const DEFAULT_KV_URL = 'https://excited-satyr-201088.upstash.io';
+const DEFAULT_KV_TOKEN = 'gQAAAAAAAxGAAAIgcDE3ZjEwNWVkMjY4N2I0NzYyOWExZThiMWY3OTc5Y2MyMg';
+
+const KV_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || DEFAULT_KV_URL;
+const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || DEFAULT_KV_TOKEN;
 const KV_KEY = 'sky_b2b_database';
 
 async function fetchFromKv() {
@@ -31,11 +34,12 @@ async function fetchFromKv() {
     if (data && data.result) {
       const parsed = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
       if (parsed && Array.isArray(parsed.users)) {
+        console.log(`☁️ [Upstash KV] Carregados ${parsed.users.length} usuários e ${parsed.leads?.length || 0} leads da nuvem.`);
         return parsed;
       }
     }
   } catch (err) {
-    console.warn('Aviso: falha ao ler do Vercel KV:', err.message);
+    console.warn('Aviso: falha ao ler do Upstash KV:', err.message);
   }
   return null;
 }
@@ -43,16 +47,20 @@ async function fetchFromKv() {
 async function saveToKv(data) {
   if (!KV_URL || !KV_TOKEN) return;
   try {
-    await fetch(`${KV_URL}/set/${KV_KEY}`, {
+    const payload = typeof data === 'string' ? data : JSON.stringify(data);
+    const res = await fetch(`${KV_URL}/set/${KV_KEY}`, {
       method: 'POST',
       headers: { 
         Authorization: `Bearer ${KV_TOKEN}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(typeof data === 'string' ? data : JSON.stringify(data))
+      body: payload
     });
+    if (res.ok) {
+      console.log(`☁️ [Upstash KV] Gravado na nuvem permanente com sucesso (${data.users?.length || 0} usuários).`);
+    }
   } catch (err) {
-    console.warn('Aviso: falha ao gravar no Vercel KV:', err.message);
+    console.warn('Aviso: falha ao gravar no Upstash KV:', err.message);
   }
 }
 
@@ -60,7 +68,7 @@ async function saveToKv(data) {
 export async function initDb() {
   if (dbCache) return dbCache;
 
-  // 1. Tenta carregar do Vercel KV primeiro (persistência eterna na nuvem)
+  // 1. Tenta carregar do Upstash KV primeiro (persistência eterna na nuvem)
   const kvData = await fetchFromKv();
   if (kvData) {
     dbCache = kvData;
@@ -72,11 +80,6 @@ export async function initDb() {
     } catch {
       // 3. Fallback para initialDatabase embutido
       dbCache = JSON.parse(JSON.stringify(initialDatabase));
-      try {
-        await saveDb();
-      } catch (saveErr) {
-        console.warn('Aviso: não foi possível gravar em DB_PATH, mantendo em memória:', saveErr.message);
-      }
     }
   }
 
@@ -93,9 +96,12 @@ export async function initDb() {
       active: true,
       createdAt: new Date().toISOString()
     });
-    try {
-      await saveDb();
-    } catch {}
+    await saveDb();
+  } else {
+    // Se ainda não estava no KV, garante primeira sincronização para a nuvem
+    if (!kvData) {
+      await saveToKv(dbCache);
+    }
   }
 
   return dbCache;
@@ -104,8 +110,8 @@ export async function initDb() {
 export async function saveDb() {
   if (!dbCache) return;
 
-  // 1. Salva no Vercel KV se disponível
-  saveToKv(dbCache);
+  // 1. Salva no Upstash KV com await para garantir sincronização antes de responder
+  await saveToKv(dbCache);
 
   // 2. Salva no disco
   try {
@@ -113,7 +119,7 @@ export async function saveDb() {
     await fs.writeFile(tempPath, JSON.stringify(dbCache, null, 2), 'utf-8');
     await fs.rename(tempPath, DB_PATH);
   } catch (err) {
-    // Em ambientes serverless estritos, continua funcionando em memória
+    // Em ambientes serverless estritos, continua funcionando na nuvem e em memória
   }
 }
 
