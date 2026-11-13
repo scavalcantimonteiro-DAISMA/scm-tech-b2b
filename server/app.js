@@ -37,6 +37,16 @@ app.use(['/api/leads', '/leads'], leadsRoutes);
 app.use(['/api/search', '/search'], searchRoutes);
 app.use(['/api/system', '/system'], systemRoutes);
 
+// Healthcheck
+app.get(['/api/health', '/health'], (req, res) => {
+  res.json({
+    status: 'online',
+    system: 'SCM TECH B2B Lead Master',
+    version: '1.0.0',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Servir frontend compilado em produção (pasta dist)
 const clientDist = path.join(__dirname, '..', 'dist');
 app.use(express.static(clientDist));
