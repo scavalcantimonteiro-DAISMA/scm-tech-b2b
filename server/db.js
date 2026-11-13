@@ -1,86 +1,56 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import bcrypt from 'bcryptjs';
 import { BRAZIL_STATES, RAMOS_CONFIG } from './data/brazilData.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DEFAULT_SEED_PATH = path.join(__dirname, 'data', 'database.json');
+const require = createRequire(import.meta.url);
+const initialDatabase = require('./data/database.json');
+
 const DB_PATH = process.env.VERCEL
   ? path.join('/tmp', 'database.json')
-  : DEFAULT_SEED_PATH;
+  : path.join(path.dirname(fileURLToPath(import.meta.url)), 'data', 'database.json');
 
 // Memória em cache para performance ultrarrápida
 let dbCache = null;
 
 // Garante que o banco de dados exista e esteja inicializado
 export async function initDb() {
+  if (dbCache) return dbCache;
+
   try {
-    let rawData;
-    try {
-      rawData = await fs.readFile(DB_PATH, 'utf-8');
-    } catch {
-      // No Vercel, copia da base inicial pré-semeada se não existir em /tmp
-      rawData = await fs.readFile(DEFAULT_SEED_PATH, 'utf-8');
-      await fs.writeFile(DB_PATH, rawData, 'utf-8');
-    }
+    const rawData = await fs.readFile(DB_PATH, 'utf-8');
     dbCache = JSON.parse(rawData);
-    
-    // Garante que o Adm padrão com a senha solicitada exista
-    const admExists = dbCache.users.find(u => u.username.toLowerCase() === 'adm');
-    if (!admExists) {
-      const hashedPass = await bcrypt.hash('S@ulo160605', 10);
-      dbCache.users.push({
-        id: 'usr_admin_default',
-        name: 'Saulo (Administrador SKY)',
-        username: 'Adm',
-        passwordHash: hashedPass,
-        role: 'admin',
-        active: true,
-        createdAt: new Date().toISOString()
-      });
+  } catch {
+    // Se não encontrou o arquivo físico (ex: primeira execução no Vercel serverless), usa o initialDatabase embutido
+    dbCache = JSON.parse(JSON.stringify(initialDatabase));
+    try {
       await saveDb();
+    } catch (saveErr) {
+      console.warn('Aviso: não foi possível gravar em DB_PATH, mantendo em memória:', saveErr.message);
     }
-    return dbCache;
-  } catch (err) {
-    // Banco não existe, inicializa do zero
-    const hashedAdm = await bcrypt.hash('S@ulo160605', 10);
-    const hashedVendedor = await bcrypt.hash('123456', 10);
-
-    const initialUsers = [
-      {
-        id: 'usr_admin_default',
-        name: 'Saulo (Administrador SKY)',
-        username: 'Adm',
-        passwordHash: hashedAdm,
-        role: 'admin',
-        active: true,
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 'usr_vendedor_1',
-        name: 'Lucas Pereira (Vendedor)',
-        username: 'lucas.sky',
-        passwordHash: hashedVendedor,
-        role: 'vendedor',
-        active: true,
-        createdAt: new Date().toISOString()
-      }
-    ];
-
-    dbCache = {
-      users: initialUsers,
-      leads: [],
-      activityLogs: []
-    };
-
-    // Preenche alguns leads iniciais representativos para cada segmento
-    seedInitialLeads(dbCache);
-
-    await saveDb();
-    return dbCache;
   }
+
+  // Garante que o Adm padrão com a senha solicitada exista sempre
+  const admExists = dbCache.users.find(u => u.username.toLowerCase() === 'adm');
+  if (!admExists) {
+    const hashedPass = await bcrypt.hash('S@ulo160605', 10);
+    dbCache.users.push({
+      id: 'usr_admin_default',
+      name: 'Saulo (Administrador SKY)',
+      username: 'Adm',
+      passwordHash: hashedPass,
+      role: 'admin',
+      active: true,
+      createdAt: new Date().toISOString()
+    });
+    try {
+      await saveDb();
+    } catch {}
+  }
+
+  return dbCache;
 }
 
 export async function saveDb() {

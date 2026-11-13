@@ -29,11 +29,11 @@ app.use(async (req, res, next) => {
   }
 });
 
-// Rotas da API
-app.use('/api/auth', authRoutes);
-app.use('/api/users', usersRoutes);
-app.use('/api/leads', leadsRoutes);
-app.use('/api/search', searchRoutes);
+// Rotas da API (suporta com ou sem prefixo /api)
+app.use(['/api/auth', '/auth'], authRoutes);
+app.use(['/api/users', '/users'], usersRoutes);
+app.use(['/api/leads', '/leads'], leadsRoutes);
+app.use(['/api/search', '/search'], searchRoutes);
 
 // Servir frontend compilado em produção (pasta dist)
 const clientDist = path.join(__dirname, '..', 'dist');
