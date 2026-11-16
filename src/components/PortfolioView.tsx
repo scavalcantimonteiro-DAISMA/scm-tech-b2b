@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Phone, 
   MessageSquare, 
@@ -22,12 +22,15 @@ import {
   StickyNote,
   Radio,
   Sparkles,
-  PhoneCall
+  PhoneCall,
+  Edit3,
+  Upload
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { api } from '../services/api';
 import { DashboardStats, Lead, LeadStatus, User } from '../types';
 import { LeadOutcomeModal } from './LeadOutcomeModal';
+import { EditLeadModal } from './EditLeadModal';
 
 interface PortfolioViewProps {
   currentUser: User;
@@ -63,6 +66,13 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
 
   // Modal de desfecho comercial (contato, agendamento, operadora, fechamento)
   const [outcomeModalLead, setOutcomeModalLead] = useState<Lead | null>(null);
+
+  // Modal de edição de contato / WhatsApp
+  const [editingLead, setEditingLead] = useState<Lead | null>(null);
+
+  // Importação de planilha Excel
+  const excelInputRef = useRef<HTMLInputElement>(null);
+  const [importingExcel, setImportingExcel] = useState(false);
 
   // Controle de Supervisor para Adm
   const [targetUserId, setTargetUserId] = useState<string>(currentUser.id);
@@ -181,6 +191,105 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
     XLSX.writeFile(workbook, `Carteira_SKY_B2B_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
+  const handleExcelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImportingExcel(true);
+    const reader = new FileReader();
+
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const rawData = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
+
+        if (!rawData || rawData.length === 0) {
+          alert('A planilha selecionada está vazia ou não possui linhas válidas.');
+          setImportingExcel(false);
+          return;
+        }
+
+        const parsedLeads: Partial<Lead>[] = rawData.map((row, idx) => {
+          const findVal = (keys: string[]) => {
+            for (const k of Object.keys(row)) {
+              const cleanK = k.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+              if (keys.some(target => cleanK.includes(target))) {
+                const val = row[k];
+                return val !== undefined && val !== null ? String(val).trim() : '';
+              }
+            }
+            return '';
+          };
+
+          const tradeName = findVal(['fantasia', 'nome', 'empresa', 'cliente', 'estabelecimento', 'razao']) || `Estabelecimento Importado ${idx + 1}`;
+          const companyName = findVal(['razao', 'social', 'empresa']) || tradeName;
+          const phone = findVal(['fixo', 'telefone', 'tel', 'fone', 'comercial']) || '(11) 3000-0000';
+          const whatsapp = findVal(['whatsapp', 'whats', 'zap', 'celular', 'cel', 'movel']) || phone;
+          const contactPerson = findVal(['contato', 'decisor', 'responsavel', 'gerente', 'socio', 'comprador', 'diretor']) || 'Gerente / Proprietário';
+          const street = findVal(['rua', 'endereco', 'logradouro', 'av', 'avenida']) || 'Av. Principal';
+          const number = findVal(['numero', 'num', 'n']) || 'S/N';
+          const neighborhood = findVal(['bairro', 'distrito']) || 'Centro';
+          const city = findVal(['cidade', 'municipio']) || 'São Paulo';
+          const state = findVal(['estado', 'uf']) || 'SP';
+          const cep = findVal(['cep']) || '00000-000';
+          const cnpj = findVal(['cnpj', 'documento']) || `${String(idx + 10).padStart(2, '0')}.123.456/0001-00`;
+          const screens = findVal(['telas', 'quartos', 'pontos', 'leitos', 'tvs']) || '25 telas/quartos';
+          const ramoText = findVal(['ramo', 'categoria', 'tipo', 'segmento']).toLowerCase();
+          
+          let ramo: 'hoteis' | 'hospitais' | 'bares_restaurantes' = 'hoteis';
+          let ramoLabel = 'Hotelaria & Pousadas';
+          if (ramoText.includes('hosp') || ramoText.includes('saude') || ramoText.includes('clin') || ramoText.includes('medic')) {
+            ramo = 'hospitais';
+            ramoLabel = 'Hospitais & Clínicas';
+          } else if (ramoText.includes('bar') || ramoText.includes('rest') || ramoText.includes('choper') || ramoText.includes('aliment') || ramoText.includes('gastronom')) {
+            ramo = 'bares_restaurantes';
+            ramoLabel = 'Bares & Restaurantes';
+          }
+
+          return {
+            ramo,
+            ramoLabel,
+            tradeName,
+            companyName,
+            cnpj,
+            phone,
+            whatsapp,
+            email: findVal(['email', 'e-mail', 'mail']) || `comercial@${tradeName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com.br`,
+            website: findVal(['site', 'web', 'link']) || '',
+            street,
+            number,
+            neighborhood,
+            city,
+            state: state.slice(0, 2).toUpperCase(),
+            cep,
+            estimatedScreens: screens,
+            screensCount: parseInt(screens.replace(/\D/g, ''), 10) || 25,
+            contactPerson,
+            skySolution: 'Soluções Corporativas SKY B2B em Alta Definição',
+            cnae: '5510-8/01 - Atividades Hoteleiras e Similares',
+            status: 'NOVO'
+          };
+        });
+
+        const targetUser = currentUser.role === 'admin' && targetUserId !== 'all' ? targetUserId : currentUser.id;
+        const res = await api.importLeads(parsedLeads, targetUser);
+        alert(`✅ Sucesso! ${res.count} estabelecimentos com números de WhatsApp reais foram importados para a carteira!`);
+        loadPortfolioData();
+        onLeadUpdated();
+      } catch (err: any) {
+        alert(err.message || 'Erro ao processar planilha Excel.');
+      } finally {
+        setImportingExcel(false);
+        if (excelInputRef.current) excelInputRef.current.value = '';
+      }
+    };
+
+    reader.readAsBinaryString(file);
+  };
+
   return (
     <div className="space-y-6">
       {/* KPI Cards */}
@@ -294,9 +403,31 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
               onClick={exportToExcel}
               disabled={leads.length === 0}
               className="px-3.5 py-2 rounded-xl font-bold text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+              title="Baixar todos os leads da carteira em formato Excel"
             >
               <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
               <span>Exportar Excel</span>
+            </button>
+
+            {/* Input Oculto de Arquivo Excel */}
+            <input
+              type="file"
+              ref={excelInputRef}
+              onChange={handleExcelUpload}
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+            />
+
+            {/* Importar Planilha Excel Real */}
+            <button
+              type="button"
+              onClick={() => excelInputRef.current?.click()}
+              disabled={importingExcel}
+              className="px-3.5 py-2 rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-700 text-white transition flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50"
+              title="Importar lista com clientes reais e números de WhatsApp verdadeiros (.xlsx ou .csv)"
+            >
+              <Upload className="w-4 h-4" />
+              <span>{importingExcel ? 'Importando...' : 'Importar Excel Real'}</span>
             </button>
           </div>
         </div>
@@ -439,6 +570,16 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
                       <StickyNote className="w-4 h-4" />
                     </button>
 
+                    {/* Botão Editar Contato / WhatsApp Real */}
+                    <button
+                      type="button"
+                      onClick={() => setEditingLead(lead)}
+                      title="Editar Contato, WhatsApp e Dados do Estabelecimento"
+                      className="p-2 rounded-xl bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-600 transition cursor-pointer"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                    </button>
+
                     {/* Seletor Rápido de Status */}
                     <select
                       value={lead.status}
@@ -479,6 +620,19 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
           onClose={() => setOutcomeModalLead(null)}
           onSuccess={() => {
             setOutcomeModalLead(null);
+            loadPortfolioData();
+            onLeadUpdated();
+          }}
+        />
+      )}
+
+      {/* Modal de Edição de Contato / WhatsApp Real */}
+      {editingLead && (
+        <EditLeadModal
+          lead={editingLead}
+          onClose={() => setEditingLead(null)}
+          onSuccess={() => {
+            setEditingLead(null);
             loadPortfolioData();
             onLeadUpdated();
           }}

@@ -150,6 +150,68 @@ router.post('/import', async (req, res) => {
   }
 });
 
+// PUT /api/leads/:id - Atualiza dados cadastrais (Nome, WhatsApp, Telefone, Contato, etc.)
+router.put('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const db = getDb();
+
+    const lead = db.leads.find(l => l.id === id);
+    if (!lead) {
+      return res.status(404).json({ error: 'Lead não encontrado.' });
+    }
+
+    if (req.user.role !== 'admin' && lead.userId !== req.user.id) {
+      return res.status(403).json({ error: 'Acesso negado a este lead.' });
+    }
+
+    const {
+      tradeName,
+      companyName,
+      contactPerson,
+      phone,
+      whatsapp,
+      email,
+      website,
+      street,
+      number,
+      neighborhood,
+      city,
+      state,
+      cep,
+      cnpj,
+      estimatedScreens,
+      currentOperator
+    } = req.body;
+
+    if (tradeName !== undefined) lead.tradeName = String(tradeName).trim();
+    if (companyName !== undefined) lead.companyName = String(companyName).trim();
+    if (contactPerson !== undefined) lead.contactPerson = String(contactPerson).trim();
+    if (phone !== undefined) lead.phone = String(phone).trim();
+    if (whatsapp !== undefined) lead.whatsapp = String(whatsapp).trim();
+    if (email !== undefined) lead.email = String(email).trim();
+    if (website !== undefined) lead.website = String(website).trim();
+    if (street !== undefined) lead.street = String(street).trim();
+    if (number !== undefined) lead.number = String(number).trim();
+    if (neighborhood !== undefined) lead.neighborhood = String(neighborhood).trim();
+    if (city !== undefined) lead.city = String(city).trim();
+    if (state !== undefined) lead.state = String(state).trim();
+    if (cep !== undefined) lead.cep = String(cep).trim();
+    if (cnpj !== undefined) lead.cnpj = String(cnpj).trim();
+    if (estimatedScreens !== undefined) lead.estimatedScreens = String(estimatedScreens).trim();
+    if (currentOperator !== undefined) lead.currentOperator = String(currentOperator).trim();
+
+    lead.updatedAt = new Date().toISOString();
+
+    await saveDb();
+
+    res.json({ message: 'Dados cadastrais atualizados com sucesso!', lead });
+  } catch (err) {
+    console.error('Erro ao atualizar lead:', err);
+    res.status(500).json({ error: 'Erro ao atualizar dados do lead.' });
+  }
+});
+
 // PUT /api/leads/:id/status - Atualiza status do lead (se ligou, agendou visita, fechou)
 router.put('/:id/status', async (req, res) => {
   try {

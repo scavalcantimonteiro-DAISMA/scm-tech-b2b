@@ -132,6 +132,19 @@ export const api = {
     return res.json();
   },
 
+  async updateLead(id: string, data: Partial<Lead>): Promise<{ message: string; lead: Lead }> {
+    const res = await fetch(`${BASE_URL}/leads/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Erro ao atualizar dados do lead' }));
+      throw new Error(err.error || 'Erro ao atualizar dados do lead');
+    }
+    return res.json();
+  },
+
   async updateLeadStatus(id: string, data: {
     status: LeadStatus;
     currentOperator?: string | null;
@@ -195,9 +208,10 @@ export const api = {
     return res.json();
   },
 
-  async searchLeads(ramo: string, uf: string, city?: string, count: number = 15): Promise<{ total: number; leads: Lead[] }> {
+  async searchLeads(ramo: string, uf: string, city?: string, count: number = 15, keyword?: string): Promise<{ total: number; leads: Lead[] }> {
     const params = new URLSearchParams({ ramo, uf, count: count.toString() });
     if (city) params.append('city', city);
+    if (keyword && keyword.trim()) params.append('keyword', keyword.trim());
     const res = await fetch(`${BASE_URL}/search/leads?${params.toString()}`, {
       headers: getAuthHeaders()
     });

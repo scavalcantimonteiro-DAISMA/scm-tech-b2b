@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Building2, 
   Hotel, 
@@ -14,11 +14,16 @@ import {
   Tv, 
   Sparkles,
   Users,
-  Check
+  Check,
+  Edit3,
+  Upload,
+  FileSpreadsheet
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { api } from '../services/api';
 import { Lead, RamoConfig, StateConfig, User } from '../types';
 import { useTheme } from '../context/ThemeContext';
+import { EditLeadModal } from './EditLeadModal';
 
 interface LeadGeneratorProps {
   currentUser: User;
@@ -32,11 +37,19 @@ export const LeadGenerator: React.FC<LeadGeneratorProps> = ({ currentUser, onLea
   const [selectedState, setSelectedState] = useState<string>('SP');
   const [selectedCity, setSelectedCity] = useState<string>('São Paulo');
   const [leadCount, setLeadCount] = useState<number>(500);
+  const [searchKeyword, setSearchKeyword] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [searchResults, setSearchResults] = useState<Lead[]>([]);
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
   const [importing, setImporting] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+
+  // Modal de edição de lead na prévia
+  const [editingLead, setEditingLead] = useState<Lead | null>(null);
+
+  // Importação de planilha Excel
+  const excelInputRef = useRef<HTMLInputElement>(null);
+  const [importingExcel, setImportingExcel] = useState(false);
 
   // Paginação e filtro interno dos resultados
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -94,16 +107,125 @@ export const LeadGenerator: React.FC<LeadGeneratorProps> = ({ currentUser, onLea
     setResultFilter('');
 
     try {
-      const res = await api.searchLeads(selectedRamo, selectedState, selectedCity, leadCount);
+      const res = await api.searchLeads(selectedRamo, selectedState, selectedCity, leadCount, searchKeyword);
       setSearchResults(res.leads);
       // Seleciona todos por padrão para facilitar a importação
       const allIds = new Set(res.leads.map(l => l.id));
       setSelectedLeadIds(allIds);
+      if (res.leads.length === 0) {
+        setFeedbackMessage('Nenhum resultado encontrado para os filtros selecionados.');
+      }
     } catch (err: any) {
       alert(err.message || 'Erro ao minerar leads');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleExcelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImportingExcel(true);
+    const reader = new FileReader();
+
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const rawData = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
+
+        if (!rawData || rawData.length === 0) {
+          alert('A planilha selecionada está vazia ou não possui linhas válidas.');
+          setImportingExcel(false);
+          return;
+        }
+
+        const parsedLeads: Partial<Lead>[] = rawData.map((row, idx) => {
+          const findVal = (keys: string[]) => {
+            for (const k of Object.keys(row)) {
+              const cleanK = k.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+              if (keys.some(target => cleanK.includes(target))) {
+                const val = row[k];
+                return val !== undefined && val !== null ? String(val).trim() : '';
+              }
+            }
+            return '';
+          };
+
+          const tradeName = findVal(['fantasia', 'nome', 'empresa', 'cliente', 'estabelecimento', 'razao']) || `Estabelecimento Importado ${idx + 1}`;
+          const companyName = findVal(['razao', 'social', 'empresa']) || tradeName;
+          const phone = findVal(['fixo', 'telefone', 'tel', 'fone', 'comercial']) || '(11) 3000-0000';
+          const whatsapp = findVal(['whatsapp', 'whats', 'zap', 'celular', 'cel', 'movel']) || phone;
+          const contactPerson = findVal(['contato', 'decisor', 'responsavel', 'gerente', 'socio', 'comprador', 'diretor']) || 'Gerente / Proprietário';
+          const street = findVal(['rua', 'endereco', 'logradouro', 'av', 'avenida']) || 'Av. Principal';
+          const number = findVal(['numero', 'num', 'n']) || 'S/N';
+          const neighborhood = findVal(['bairro', 'distrito']) || 'Centro';
+          const city = findVal(['cidade', 'municipio']) || 'São Paulo';
+          const state = findVal(['estado', 'uf']) || 'SP';
+          const cep = findVal(['cep']) || '00000-000';
+          const cnpj = findVal(['cnpj', 'documento']) || `${String(idx + 10).padStart(2, '0')}.123.456/0001-00`;
+          const screens = findVal(['telas', 'quartos', 'pontos', 'leitos', 'tvs']) || '25 telas/quartos';
+          const ramoText = findVal(['ramo', 'categoria', 'tipo', 'segmento']).toLowerCase();
+          
+          let ramo: 'hoteis' | 'hospitais' | 'bares_restaurantes' = 'hoteis';
+          let ramoLabel = 'Hotelaria & Pousadas';
+          if (ramoText.includes('hosp') || ramoText.includes('saude') || ramoText.includes('clin') || ramoText.includes('medic')) {
+            ramo = 'hospitais';
+            ramoLabel = 'Hospitais & Clínicas';
+          } else if (ramoText.includes('bar') || ramoText.includes('rest') || ramoText.includes('choper') || ramoText.includes('aliment') || ramoText.includes('gastronom')) {
+            ramo = 'bares_restaurantes';
+            ramoLabel = 'Bares & Restaurantes';
+          }
+
+          return {
+            id: `lead_excel_${Date.now()}_${idx}`,
+            ramo,
+            ramoLabel,
+            tradeName,
+            companyName,
+            cnpj,
+            phone,
+            whatsapp,
+            email: findVal(['email', 'e-mail', 'mail']) || `comercial@${tradeName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com.br`,
+            website: findVal(['site', 'web', 'link']) || '',
+            street,
+            number,
+            neighborhood,
+            city,
+            state: state.slice(0, 2).toUpperCase(),
+            cep,
+            estimatedScreens: screens,
+            screensCount: parseInt(screens.replace(/\D/g, ''), 10) || 25,
+            contactPerson,
+            skySolution: 'Soluções Corporativas SKY B2B em Alta Definição',
+            cnae: '5510-8/01 - Atividades Hoteleiras e Similares',
+            status: 'NOVO',
+            visitDate: null,
+            visitNotes: null,
+            callCount: 0,
+            lastCallAt: null,
+            notes: [],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          } as Lead;
+        });
+
+        // Coloca na prévia para o usuário ver antes de importar ou salva direto se preferir
+        setSearchResults(parsedLeads as Lead[]);
+        setSelectedLeadIds(new Set((parsedLeads as Lead[]).map(l => l.id)));
+        setFeedbackMessage(`📄 ${parsedLeads.length} estabelecimentos carregados da planilha! Selecione e clique em "Adicionar à Carteira" para gravar de vez.`);
+      } catch (err: any) {
+        alert(err.message || 'Erro ao processar planilha Excel.');
+      } finally {
+        setImportingExcel(false);
+        if (excelInputRef.current) excelInputRef.current.value = '';
+      }
+    };
+
+    reader.readAsBinaryString(file);
   };
 
   const toggleSelectAll = () => {
@@ -198,14 +320,64 @@ export const LeadGenerator: React.FC<LeadGeneratorProps> = ({ currentUser, onLea
       </div>
 
       {/* Filter Card */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-        <h2 className="text-base font-bold text-slate-900 mb-4 flex items-center gap-2">
-          <Search className={`w-5 h-5 ${theme.highlightText}`} />
-          <span>Defina os Filtros da Busca:</span>
-        </h2>
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+            <Search className={`w-5 h-5 ${theme.highlightText}`} />
+            <span>Buscar & Minerar Estabelecimentos:</span>
+          </h2>
+          <span className="text-xs text-slate-500 font-medium">
+            Pesquise por nome livre ou use os filtros por ramo e localidade
+          </span>
+        </div>
+
+        {/* Barra de Pesquisa Livre (Nome, Rede ou Palavra-Chave) */}
+        <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+          <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider mb-2 flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <Search className="w-4 h-4 text-amber-500" />
+              Pesquisa Livre por Nome, Rede ou Palavra-Chave:
+            </span>
+            <span className="text-[11px] text-slate-400 font-normal normal-case">
+              (Ex: Ibis, Copacabana, Fasano, Outback, Samaritano, Santa Casa, Choperia...)
+            </span>
+          </label>
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchKeyword}
+                onChange={(e) => setSearchKeyword(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSearch();
+                }}
+                placeholder="Digite o nome de um hotel, hospital, bar ou termo para pesquisar diretamente..."
+                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 bg-white text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-xs"
+              />
+            </div>
+            {searchKeyword && (
+              <button
+                type="button"
+                onClick={() => setSearchKeyword('')}
+                className="px-3 py-2 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-800 bg-white border border-slate-300 transition cursor-pointer"
+              >
+                Limpar
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleSearch}
+              disabled={loading}
+              className="px-5 py-2.5 rounded-xl font-black text-xs text-slate-950 bg-amber-400 hover:bg-amber-500 transition shadow-sm cursor-pointer disabled:opacity-50"
+            >
+              {loading ? 'Pesquisando...' : 'Buscar Agora'}
+            </button>
+          </div>
+        </div>
 
         {/* 1. Escolha do Ramo */}
-        <div className="mb-6">
+        <div>
           <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
             1. Selecione o Ramo Alvo:
           </label>
@@ -357,6 +529,41 @@ export const LeadGenerator: React.FC<LeadGeneratorProps> = ({ currentUser, onLea
               )}
             </button>
           </div>
+        </div>
+
+        {/* Input Oculto de Arquivo Excel */}
+        <input
+          type="file"
+          ref={excelInputRef}
+          onChange={handleExcelUpload}
+          accept=".xlsx,.xls,.csv"
+          className="hidden"
+        />
+
+        {/* Card de Importação de Planilha Excel com Contatos Reais */}
+        <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 bg-emerald-50/60 p-4 rounded-xl border border-emerald-200">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-emerald-600 text-white shadow-xs">
+              <Upload className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="block font-bold text-xs text-emerald-950">
+                Tem uma lista própria com telefones e WhatsApps reais?
+              </span>
+              <span className="block text-[11px] text-emerald-800">
+                Suba planilhas em Excel (.xlsx ou .csv) diretamente para disparar no WhatsApp com seus clientes verdadeiros.
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => excelInputRef.current?.click()}
+            disabled={importingExcel}
+            className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition flex items-center gap-1.5 shadow-sm cursor-pointer shrink-0 disabled:opacity-50"
+          >
+            <Upload className="w-4 h-4" />
+            <span>{importingExcel ? 'Processando Planilha...' : 'Subir Planilha Excel (.xlsx)'}</span>
+          </button>
         </div>
       </div>
 
@@ -588,6 +795,14 @@ export const LeadGenerator: React.FC<LeadGeneratorProps> = ({ currentUser, onLea
                             >
                               <MapPin className="w-4 h-4" />
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingLead(lead)}
+                              title="Editar Contato / WhatsApp Real"
+                              className="p-2 rounded-lg bg-slate-100 text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 transition cursor-pointer"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -645,6 +860,23 @@ export const LeadGenerator: React.FC<LeadGeneratorProps> = ({ currentUser, onLea
           </div>
         );
       })()}
+
+      {/* Modal de Edição de Contato na Prévia */}
+      {editingLead && (
+        <EditLeadModal
+          lead={editingLead}
+          onClose={() => setEditingLead(null)}
+          onSaveLead={(updatedFields) => {
+            setSearchResults(prev =>
+              prev.map(l => (l.id === editingLead.id ? { ...l, ...updatedFields } as Lead : l))
+            );
+            setEditingLead(null);
+          }}
+          onSuccess={() => {
+            setEditingLead(null);
+          }}
+        />
+      )}
     </div>
   );
 };

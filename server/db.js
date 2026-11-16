@@ -168,7 +168,7 @@ export async function syncDb({ users = [], leads = [] }) {
 }
 
 // Gera leads realistas para qualquer combinação de Ramo + UF + Cidade em escala massiva
-export function generateLeadsForSearch({ ramo, uf, city, count = 50, userId = null, userName = null }) {
+export function generateLeadsForSearch({ ramo, uf, city, count = 50, userId = null, userName = null, keyword = '' }) {
   const stateObj = BRAZIL_STATES.find(s => s.uf === uf) || BRAZIL_STATES[0];
   const targetCity = city || stateObj.cities[0] || 'Capital';
   const ramoConfig = RAMOS_CONFIG[ramo] || RAMOS_CONFIG.hoteis;
@@ -227,9 +227,14 @@ export function generateLeadsForSearch({ ramo, uf, city, count = 50, userId = nu
   const prefixes = ramo === 'hoteis' ? prefixosHoteis : (ramo === 'hospitais' ? prefixosHospitais : prefixosBares);
 
   const safeCount = Math.min(Math.max(Number(count) || 50, 1), 2000);
+  const cleanKeyword = (keyword || '').trim();
 
   for (let i = 0; i < safeCount; i++) {
-    const basePrefix = prefixes[i % prefixes.length];
+    let basePrefix = prefixes[i % prefixes.length];
+    if (cleanKeyword) {
+      // Se usuário buscou por palavra-chave específica, incorpora o termo no nome
+      basePrefix = `${cleanKeyword} • ${basePrefix}`;
+    }
     const cycle = Math.floor(i / prefixes.length);
     const suffix = cycle > 0 ? ` (Unidade ${cycle + 1})` : '';
     const tradeName = `${basePrefix} ${targetCity}${suffix}`;

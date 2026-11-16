@@ -17,18 +17,19 @@ router.get('/meta', (req, res) => {
 // GET /api/search/leads - Busca e minera leads no ramo e localidade selecionados
 router.get('/leads', (req, res) => {
   try {
-    const { ramo = 'hoteis', uf = 'SP', city, count = 15 } = req.query;
+    const { ramo = 'hoteis', uf = 'SP', city, count = 15, keyword } = req.query;
 
     const leads = generateLeadsForSearch({
       ramo,
       uf,
       city: city || undefined,
-      count: parseInt(count, 10) || 15
+      count: parseInt(count, 10) || 15,
+      keyword: keyword ? String(keyword).trim() : ''
     });
 
     res.json({
       total: leads.length,
-      filters: { ramo, uf, city },
+      filters: { ramo, uf, city, keyword: keyword || null },
       leads
     });
   } catch (err) {
