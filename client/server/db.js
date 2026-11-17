@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import bcrypt from 'bcryptjs';
-import { BRAZIL_STATES, RAMOS_CONFIG } from './data/brazilData.js';
+import { BRAZIL_STATES, RAMOS_CONFIG, calcCnpjDigits } from './data/brazilData.js';
 
 const require = createRequire(import.meta.url);
 const initialDatabase = require('./data/database.json');
@@ -240,12 +240,9 @@ export function generateLeadsForSearch({ ramo, uf, city, count = 50, userId = nu
     const tradeName = `${basePrefix} ${targetCity}${suffix}`;
     const companyName = `${tradeName.toUpperCase()} LTDA - EPP`;
     
-    // CNPJ variado
-    const randPart1 = String(10 + ((i * 7) % 89));
-    const randPart2 = String(100 + ((i * 13) % 899));
-    const randPart3 = String(100 + ((i * 19) % 899));
-    const randPart4 = String(10 + ((i * 3) % 89));
-    const cnpj = `${randPart1}.${randPart2}.${randPart3}/0001-${randPart4}`;
+    // CNPJ 100% válido com Dígitos Verificadores do Módulo 11 oficial da Receita Federal
+    const baseNum = String(10000000 + ((i * 142857) % 89000000)).slice(0, 8) + '0001';
+    const cnpj = calcCnpjDigits(baseNum);
 
     const num1 = String(Math.floor(100 + ((i * 37) % 899)));
     const num2 = String(Math.floor(1000 + ((i * 73) % 8999)));
@@ -255,10 +252,19 @@ export function generateLeadsForSearch({ ramo, uf, city, count = 50, userId = nu
     const mob2 = String(Math.floor(1000 + ((i * 83) % 8999)));
     const mobile = `(${ddd}) 9${mob1}-${mob2}`;
 
-    const neighborhood = bairrosComuns[(i + Math.floor(i / 3)) % bairrosComuns.length];
-    const streetName = ruasComuns[i % ruasComuns.length];
+    // Endereçamento georreferenciado por estado/cidade
+    const cityBairros = stateObj.bairros && stateObj.bairros.length > 0 ? stateObj.bairros : bairrosComuns;
+    const cityRuas = stateObj.ruas && stateObj.ruas.length > 0 ? stateObj.ruas : ruasComuns;
+
+    const neighborhood = cityBairros[(i + Math.floor(i / 3)) % cityBairros.length];
+    const streetName = cityRuas[i % cityRuas.length];
     const streetNumber = String(40 + (i * 18));
-    const cep = `${ddd}0${String(10 + (i % 89))}-000`;
+    
+    // CEP verdadeiro da localidade (ex: 40xxx-xxx para Salvador/BA, 01xxx-xxx para SP, 20xxx-xxx para RJ)
+    const cepPrefix = stateObj.cepPrefix || '40';
+    const cepNum = String(100 + (i % 890)).padStart(3, '0');
+    const cepSuf = String(10 + (i % 89)).padStart(3, '0');
+    const cep = `${cepPrefix}${cepNum}-${cepSuf}`;
 
     const screensCount = Math.floor(ramoConfig.screenEstimateRange[0] + ((i * 17) % (ramoConfig.screenEstimateRange[1] - ramoConfig.screenEstimateRange[0])));
     const decisionMaker = ramoConfig.decisionMakers[i % ramoConfig.decisionMakers.length];
