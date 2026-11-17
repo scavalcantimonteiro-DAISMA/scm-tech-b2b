@@ -14,6 +14,8 @@ const DB_PATH = process.env.VERCEL
 
 // Memória em cache para performance ultrarrápida
 let dbCache = null;
+let lastFetchedAt = 0;
+const CACHE_TTL_MS = 5000; // 5 segundos de cache em memória para velocidade máxima + consistência entre instâncias serverless
 
 // Configuração persistente oficial Upstash KV / Redis
 const DEFAULT_KV_URL = 'https://excited-satyr-201088.upstash.io';
@@ -65,21 +67,27 @@ async function saveToKv(data) {
 }
 
 // Garante que o banco de dados exista e esteja inicializado
-export async function initDb() {
-  if (dbCache) return dbCache;
+export async function initDb(force = false) {
+  const now = Date.now();
+  if (dbCache && !force && (now - lastFetchedAt < CACHE_TTL_MS)) {
+    return dbCache;
+  }
 
   // 1. Tenta carregar do Upstash KV primeiro (persistência eterna na nuvem)
   const kvData = await fetchFromKv();
   if (kvData) {
     dbCache = kvData;
-  } else {
+    lastFetchedAt = now;
+  } else if (!dbCache) {
     // 2. Tenta carregar do disco local / /tmp
     try {
       const rawData = await fs.readFile(DB_PATH, 'utf-8');
       dbCache = JSON.parse(rawData);
+      lastFetchedAt = now;
     } catch {
       // 3. Fallback para initialDatabase embutido
       dbCache = JSON.parse(JSON.stringify(initialDatabase));
+      lastFetchedAt = now;
     }
   }
 
@@ -109,6 +117,7 @@ export async function initDb() {
 
 export async function saveDb() {
   if (!dbCache) return;
+  lastFetchedAt = Date.now();
 
   // 1. Salva no Upstash KV com await para garantir sincronização antes de responder
   await saveToKv(dbCache);

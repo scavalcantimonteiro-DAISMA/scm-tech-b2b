@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LogIn, ShieldCheck, Tv, AlertCircle, Sparkles } from 'lucide-react';
+import { LogIn, ShieldCheck, Tv, AlertCircle, Sparkles, Eye, EyeOff } from 'lucide-react';
 import { api } from '../services/api';
 import { User } from '../types';
 
@@ -10,6 +10,7 @@ interface LoginViewProps {
 export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
   const [username, setUsername] = useState('Adm');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -19,7 +20,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
     setLoading(true);
 
     try {
-      const response = await api.login(username, password);
+      const response = await api.login(username.trim(), password.trim());
       onLoginSuccess(response.user);
     } catch (err: any) {
       setError(err.message || 'Credenciais inválidas. Verifique seu login e senha.');
@@ -81,14 +82,25 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
             <label className="block text-xs font-medium text-slate-300 uppercase tracking-wider mb-2">
               Senha de Acesso
             </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Digite sua senha"
-              required
-              className="w-full px-4 py-3 rounded-xl bg-zinc-800/80 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition"
-            />
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Digite sua senha"
+                required
+                className="w-full px-4 py-3 pr-11 rounded-xl bg-zinc-800/80 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                tabIndex={-1}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-amber-300 transition p-1 cursor-pointer"
+                title={showPassword ? 'Ocultar senha' : 'Ver senha digitada'}
+              >
+                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
+            </div>
           </div>
 
           <button

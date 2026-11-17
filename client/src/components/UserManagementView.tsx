@@ -10,7 +10,9 @@ import {
   Briefcase, 
   Phone, 
   CalendarCheck,
-  AlertCircle
+  AlertCircle,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { api } from '../services/api';
 import { User } from '../types';
@@ -27,6 +29,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
   const [role, setRole] = useState<'vendedor' | 'admin'>('vendedor');
   const [creating, setCreating] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -35,6 +38,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
   // Modal para trocar senha
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState('');
+  const [showResetPassword, setShowResetPassword] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
   useEffect(() => {
@@ -45,32 +49,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
     setLoading(true);
     try {
       const data = await api.getUsers();
-
-      // Recupera backup do navegador
-      const localBackupRaw = localStorage.getItem('sky_b2b_vault_backup');
-      if (localBackupRaw) {
-        try {
-          const localBackup = JSON.parse(localBackupRaw);
-          if (localBackup && Array.isArray(localBackup.users) && localBackup.users.length > data.length) {
-            // Cold start detectado! Auto-sincroniza vendedores salvos no navegador para o servidor
-            setSyncStatus('Sincronizando vendedores salvos com o servidor...');
-            await api.syncSystem({ users: localBackup.users });
-            const reloaded = await api.getUsers();
-            setUsers(reloaded);
-            setSyncStatus('✅ Vendedores sincronizados com sucesso!');
-            setLoading(false);
-            return;
-          }
-        } catch {}
-      }
-
       setUsers(data);
-
-      // Atualiza backup silencioso local do Admin
-      try {
-        const fullBackup = await api.getBackup();
-        localStorage.setItem('sky_b2b_vault_backup', JSON.stringify(fullBackup));
-      } catch {}
     } catch (err) {
       console.error('Erro ao listar usuários:', err);
     } finally {
@@ -122,13 +101,13 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
     setCreating(true);
 
     try {
-      await api.createUser({
-        name,
-        username,
-        password,
+      const res = await api.createUser({
+        name: name.trim(),
+        username: username.trim(),
+        password: password.trim(),
         role
       });
-      setSuccessMsg(`Usuário "${username}" criado com sucesso! Ele já pode fazer login no sistema.`);
+      setSuccessMsg((res as any).message || `Usuário "${username.trim()}" processado com sucesso! Já pode fazer login no sistema.`);
       setName('');
       setUsername('');
       setPassword('');
@@ -305,14 +284,25 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
               <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
                 Senha Inicial
               </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Defina uma senha"
-                required
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"
-              />
+              <div className="relative">
+                <input
+                  type={showCreatePassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Defina uma senha"
+                  required
+                  className="w-full px-3.5 py-2.5 pr-10 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCreatePassword(!showCreatePassword)}
+                  tabIndex={-1}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 transition cursor-pointer"
+                  title={showCreatePassword ? 'Ocultar senha' : 'Ver senha digitada'}
+                >
+                  {showCreatePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
 
             <div>
@@ -457,14 +447,25 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
 
                       {/* Caixa de Alteração de Senha rápida */}
                       {editingUserId === u.id && (
-                        <div className="mt-3 pt-3 border-t border-slate-200 flex items-center gap-2">
-                          <input
-                            type="password"
-                            placeholder="Digite a nova senha para este usuário"
-                            value={newPassword}
-                            onChange={(e) => setNewPassword(e.target.value)}
-                            className="px-3 py-1.5 rounded-lg border border-slate-300 text-xs w-64 focus:outline-none focus:ring-2 focus:ring-amber-500"
-                          />
+                        <div className="mt-3 pt-3 border-t border-slate-200 flex flex-wrap items-center gap-2">
+                          <div className="relative">
+                            <input
+                              type={showResetPassword ? 'text' : 'password'}
+                              placeholder="Digite a nova senha para este usuário"
+                              value={newPassword}
+                              onChange={(e) => setNewPassword(e.target.value)}
+                              className="px-3 py-1.5 pr-8 rounded-lg border border-slate-300 text-xs w-64 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowResetPassword(!showResetPassword)}
+                              tabIndex={-1}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 transition cursor-pointer"
+                              title={showResetPassword ? 'Ocultar senha' : 'Ver senha digitada'}
+                            >
+                              {showResetPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
                           <button
                             type="button"
                             onClick={() => handleResetPassword(u.id)}
@@ -474,8 +475,8 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
                           </button>
                           <button
                             type="button"
-                            onClick={() => { setEditingUserId(null); setNewPassword(''); }}
-                            className="text-xs text-slate-500 hover:underline"
+                            onClick={() => { setEditingUserId(null); setNewPassword(''); setShowResetPassword(false); }}
+                            className="text-xs text-slate-500 hover:underline cursor-pointer"
                           >
                             Cancelar
                           </button>

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import { getDb, saveDb } from '../db.js';
+import { getDb, saveDb, initDb } from '../db.js';
 import { authenticateToken, requireAdmin } from './auth.js';
 
 const router = Router();
@@ -38,7 +38,7 @@ router.get('/', (req, res) => {
   res.json(usersWithMetrics);
 });
 
-// POST /api/users - Cria um novo usuário
+// POST /api/users - Cria ou atualiza um usuário da equipe
 router.post('/', async (req, res) => {
   try {
     const { name, username, password, role = 'vendedor' } = req.body;
@@ -47,17 +47,37 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Preencha Nome, Login e Senha.' });
     }
 
+    await initDb(true);
     const db = getDb();
-    const existing = db.users.find(u => u.username.toLowerCase() === username.trim().toLowerCase());
+    const cleanUsername = String(username).trim();
+    const cleanPass = String(password).trim();
+
+    const existing = db.users.find(u => u.username.toLowerCase() === cleanUsername.toLowerCase());
     if (existing) {
-      return res.status(400).json({ error: 'Este login já está em uso por outro usuário.' });
+      // Se o usuário já existe na equipe, atualiza os dados e define a nova senha solicitada
+      existing.name = name.trim();
+      existing.role = role === 'admin' ? 'admin' : 'vendedor';
+      existing.active = true;
+      existing.passwordHash = await bcrypt.hash(cleanPass, 10);
+      await saveDb();
+
+      return res.status(200).json({
+        message: `Usuário "${existing.username}" atualizado com sucesso! A nova senha já está ativa.`,
+        user: {
+          id: existing.id,
+          name: existing.name,
+          username: existing.username,
+          role: existing.role,
+          active: existing.active
+        }
+      });
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(cleanPass, 10);
     const newUser = {
       id: `usr_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
       name: name.trim(),
-      username: username.trim(),
+      username: cleanUsername,
       passwordHash,
       role: role === 'admin' ? 'admin' : 'vendedor',
       active: true,
@@ -68,7 +88,7 @@ router.post('/', async (req, res) => {
     await saveDb();
 
     res.status(201).json({
-      message: 'Usuário cadastrado com sucesso!',
+      message: `Usuário "${newUser.username}" cadastrado com sucesso! Já pode acessar o sistema.`,
       user: {
         id: newUser.id,
         name: newUser.name,
@@ -88,6 +108,7 @@ router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { name, password, active, role } = req.body;
+    await initDb(true);
     const db = getDb();
 
     const user = db.users.find(u => u.id === id);
@@ -98,8 +119,8 @@ router.put('/:id', async (req, res) => {
     if (name) user.name = name.trim();
     if (typeof active === 'boolean') user.active = active;
     if (role && (role === 'admin' || role === 'vendedor')) user.role = role;
-    if (password && password.trim().length > 0) {
-      user.passwordHash = await bcrypt.hash(password.trim(), 10);
+    if (password && String(password).trim().length > 0) {
+      user.passwordHash = await bcrypt.hash(String(password).trim(), 10);
     }
 
     await saveDb();

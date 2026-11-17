@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { getDb } from '../db.js';
+import { getDb, initDb } from '../db.js';
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'sky_b2b_secret_key_saulo_2026';
@@ -41,8 +41,11 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Informe usuário e senha.' });
     }
 
+    // Força atualização em tempo real do banco de dados na nuvem Upstash KV
+    await initDb(true);
     const db = getDb();
-    const user = db.users.find(u => u.username.toLowerCase() === username.trim().toLowerCase());
+    const cleanUsername = String(username).trim().toLowerCase();
+    const user = db.users.find(u => u.username.toLowerCase() === cleanUsername);
 
     if (!user) {
       return res.status(401).json({ error: 'Usuário ou senha incorretos.' });
@@ -52,7 +55,8 @@ router.post('/login', async (req, res) => {
       return res.status(403).json({ error: 'Este usuário está desativado pelo Administrador.' });
     }
 
-    const passwordMatch = await bcrypt.compare(password, user.passwordHash);
+    const cleanPass = String(password).trim();
+    const passwordMatch = (await bcrypt.compare(cleanPass, user.passwordHash)) || (await bcrypt.compare(String(password), user.passwordHash));
     if (!passwordMatch) {
       return res.status(401).json({ error: 'Usuário ou senha incorretos.' });
     }
