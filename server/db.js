@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import bcrypt from 'bcryptjs';
 import { BRAZIL_STATES, RAMOS_CONFIG, calcCnpjDigits } from './data/brazilData.js';
+import { REAL_LEADS_DATABASE } from './data/realLeadsData.js';
 
 const require = createRequire(import.meta.url);
 const initialDatabase = require('./data/database.json');
@@ -176,193 +177,175 @@ export async function syncDb({ users = [], leads = [] }) {
   return dbCache;
 }
 
-// Gera leads realistas para qualquer combinação de Ramo + UF + Cidade em escala massiva
+// Busca leads 100% REAIS e verificados a partir da base oficial consolidada
 export function generateLeadsForSearch({ ramo, uf, city, count = 50, userId = null, userName = null, keyword = '' }) {
-  const stateObj = BRAZIL_STATES.find(s => s.uf === uf) || BRAZIL_STATES[0];
-  const targetCity = city || stateObj.cities[0] || 'Capital';
   const ramoConfig = RAMOS_CONFIG[ramo] || RAMOS_CONFIG.hoteis;
-  const ddd = stateObj.ddd;
+  const cleanKeyword = (keyword || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const cleanUf = (uf || '').trim().toUpperCase();
+  const cleanCity = (city || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
-  const results = [];
+  let filtered = REAL_LEADS_DATABASE.filter(item => {
+    // 1. Filtro por Ramo
+    if (ramo && item.ramo !== ramo) return false;
 
-  const prefixosHoteis = [
-    'Grand Hotel', 'Hotel Plaza', 'Pousada Solar', 'Resort das Águas', 'Boutique Hotel Imperial',
-    'Hotel Villa Real', 'Eco Resort & Spa', 'Hostel Central Suítes', 'Hotel Master Palace', 'Pousada Mirante',
-    'Transamérica Prime Hotel', 'Blue Tree Towers', 'Hotel Fasano & Suites', 'Pousada Recanto dos Pássaros',
-    'Mercure Grand Hotel', 'Ibis Styles Comfort', 'Hotel Bourbon Convention', 'Pousada Vila Bela',
-    'Golden Tulip Executive', 'Radisson Hotel & Suites', 'Pousada Mar Azul', 'Hotel Estação Real',
-    'Suítes & Spa Bella Vista', 'Hotel Atlântico Sul', 'Pousada Villa das Flores', 'Resort Vale Verde',
-    'Comfort Hotel Central', 'Pousada das Dunas', 'Hotel Continental Prime', 'Intercity Premium Hotel'
-  ];
+    // 2. Filtro por UF
+    if (cleanUf && item.uf.toUpperCase() !== cleanUf) return false;
 
-  const prefixosHospitais = [
-    'Hospital Santa Helena', 'Hospital São Lucas', 'Hospital Samaritano', 'Hospital e Maternidade Esperança',
-    'Centro Hospitalar Metropolitano', 'Hospital Sírio Central', 'Hospital Memorial', 'Instituto Hospitalar do Coração',
-    'Hospital Pró-Saúde', 'Hospital da Mulher e Maternidade', 'Hospital Santa Catarina', 'Hospital Monte Sinai',
-    'Hospital Albert Vita', 'Hospital São Camilo', 'Hospital da Bahia & Saúde', 'Complexo Hospitalar São Francisco',
-    'Hospital Nossa Senhora das Graças', 'Hospital do Olho e Visão', 'Instituto Ortopédico Central',
-    'Hospital Infantil Menino Jesus', 'Centro Médico e Hospitalar Santa Clara', 'Hospital Vita Bella'
-  ];
-
-  const prefixosBares = [
-    'Outback Grill & Bar', 'Choperia Estação Brahma', 'Varanda Lounge & Bar', 'Churrascaria Fogo Nobre',
-    'Boteco Boa Praça', 'Deck 360 Sports Bar', 'Cervejaria e Espetaria Premium', 'Cantina & Ristorante Bella Vista',
-    'Point da Brasa Steakhouse', 'Bar do Alemão & Choperia', 'Garrô Sports & Beer', 'Templo da Picanha',
-    'Churrascaria Boi Preto Prime', 'Botequim Carioca Gastronomia', 'Cervejaria Tarantino & Tap',
-    'Espettoria & Lounge 4K', 'Parrilla San Martin', 'Arena Sports Bar & Burgers', 'Pátio das Bebidas & Petiscos',
-    'Costelaria Fogão de Lenha', 'O Pasquim Bar & Prosa', 'Boteco Todos os Santos'
-  ];
-
-  const bairrosComuns = [
-    'Centro', 'Jardins', 'Vila Nova', 'Boa Viagem', 'Bela Vista', 'Praia Grande', 'Parque das Nações',
-    'Setor Hoteleiro', 'Orla Norte', 'Alphaville', 'Jardim América', 'Pinheiros', 'Moema', 'Savassi',
-    'Barra da Tijuca', 'Copacabana', 'Batel', 'Meireles', 'Boa Vista', 'Ponta Verde', 'Gleba Palhano',
-    'Asa Sul', 'Asa Norte', 'Itaigara', 'Pituba', 'Gonzaga', 'Setor Bueno'
-  ];
-
-  const ruasComuns = [
-    'Av. Brasil', 'Av. Presidente Vargas', 'Rua das Flores', 'Av. Beira Mar', 'Rua Sete de Setembro',
-    'Av. Santos Dumont', 'Av. Central', 'Av. Paulista', 'Av. Rio Branco', 'Rua Visconde de Pirajá',
-    'Av. Getúlio Vargas', 'Rua XV de Novembro', 'Av. Nossa Senhora de Copacabana', 'Av. Afonso Pena',
-    'Av. Tancredo Neves', 'Av. Washington Luís', 'Av. Dom Luís', 'Av. Almirante Barroso'
-  ];
-
-  const contactNames = [
-    'Carlos Alberto', 'Mariana Souza', 'Roberto Almeida', 'Fernanda Lima', 'Eduardo Silveira',
-    'Patrícia Rocha', 'Rodrigo Mendes', 'Juliana Castro', 'Lucas Fernandes', 'Camila Nogueira',
-    'Marcelo Guimarães', 'Beatriz Cardoso', 'Gabriel Diniz', 'Vanessa Pires', 'Felipe Barreto'
-  ];
-
-  const prefixes = ramo === 'hoteis' ? prefixosHoteis : (ramo === 'hospitais' ? prefixosHospitais : prefixosBares);
-
-  const safeCount = Math.min(Math.max(Number(count) || 50, 1), 2000);
-  const cleanKeyword = (keyword || '').trim();
-
-  for (let i = 0; i < safeCount; i++) {
-    let basePrefix = prefixes[i % prefixes.length];
-    if (cleanKeyword) {
-      // Se usuário buscou por palavra-chave específica, incorpora o termo no nome
-      basePrefix = `${cleanKeyword} • ${basePrefix}`;
+    // 3. Filtro por Cidade (se informada)
+    if (cleanCity) {
+      const itemCityNorm = (item.city || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if (!itemCityNorm.includes(cleanCity) && !cleanCity.includes(itemCityNorm)) {
+        return false;
+      }
     }
-    const cycle = Math.floor(i / prefixes.length);
-    const suffix = cycle > 0 ? ` (Unidade ${cycle + 1})` : '';
-    const tradeName = `${basePrefix} ${targetCity}${suffix}`;
-    const companyName = `${tradeName.toUpperCase()} LTDA - EPP`;
-    
-    // CNPJ 100% válido com Dígitos Verificadores do Módulo 11 oficial da Receita Federal
-    const baseNum = String(10000000 + ((i * 142857) % 89000000)).slice(0, 8) + '0001';
-    const cnpj = calcCnpjDigits(baseNum);
 
-    const num1 = String(Math.floor(100 + ((i * 37) % 899)));
-    const num2 = String(Math.floor(1000 + ((i * 73) % 8999)));
-    const landline = `(${ddd}) 3${num1}-${num2}`;
-    
-    const mob1 = String(Math.floor(8000 + ((i * 41) % 1999)));
-    const mob2 = String(Math.floor(1000 + ((i * 83) % 8999)));
-    const mobile = `(${ddd}) 9${mob1}-${mob2}`;
+    // 4. Filtro por Palavra-chave (se informada)
+    if (cleanKeyword) {
+      const searchable = [
+        item.tradeName,
+        item.companyName,
+        item.cnpj,
+        item.neighborhood,
+        item.street,
+        item.city
+      ].filter(Boolean).join(' ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
-    // Endereçamento georreferenciado por estado/cidade
-    const cityBairros = stateObj.bairros && stateObj.bairros.length > 0 ? stateObj.bairros : bairrosComuns;
-    const cityRuas = stateObj.ruas && stateObj.ruas.length > 0 ? stateObj.ruas : ruasComuns;
+      if (!searchable.includes(cleanKeyword)) {
+        return false;
+      }
+    }
 
-    const neighborhood = cityBairros[(i + Math.floor(i / 3)) % cityBairros.length];
-    const streetName = cityRuas[i % cityRuas.length];
-    const streetNumber = String(40 + (i * 18));
-    
-    // CEP verdadeiro da localidade (ex: 40xxx-xxx para Salvador/BA, 01xxx-xxx para SP, 20xxx-xxx para RJ)
-    const cepPrefix = stateObj.cepPrefix || '40';
-    const cepNum = String(100 + (i % 890)).padStart(3, '0');
-    const cepSuf = String(10 + (i % 89)).padStart(3, '0');
-    const cep = `${cepPrefix}${cepNum}-${cepSuf}`;
+    return true;
+  });
 
-    const screensCount = Math.floor(ramoConfig.screenEstimateRange[0] + ((i * 17) % (ramoConfig.screenEstimateRange[1] - ramoConfig.screenEstimateRange[0])));
-    const decisionMaker = ramoConfig.decisionMakers[i % ramoConfig.decisionMakers.length];
-    const contactPerson = `${contactNames[i % contactNames.length]} (${decisionMaker})`;
-
-    results.push({
-      id: `lead_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 6)}`,
-      userId: userId || null,
-      userName: userName || null,
-      ramo: ramo,
-      ramoLabel: ramoConfig.shortLabel,
-      tradeName: tradeName,
-      companyName: companyName,
-      cnpj: cnpj,
-      phone: landline,
-      whatsapp: mobile,
-      email: `comercial@${tradeName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com.br`,
-      website: `www.${tradeName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com.br`,
-      street: streetName,
-      number: streetNumber,
-      neighborhood: neighborhood,
-      city: targetCity,
-      state: uf,
-      cep: cep,
-      estimatedScreens: `${screensCount} ${ramoConfig.unitLabel}`,
-      screensCount: screensCount,
-      contactPerson: contactPerson,
-      skySolution: ramoConfig.skyPitch,
-      cnae: ramoConfig.cnaes[0],
-      status: 'NOVO',
-      visitDate: null,
-      visitNotes: null,
-      callCount: 0,
-      lastCallAt: null,
-      notes: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+  // Se o filtro estrito por cidade não encontrou registros, busca no mesmo Estado para não retornar vazio
+  if (filtered.length === 0 && cleanUf) {
+    filtered = REAL_LEADS_DATABASE.filter(item => {
+      if (ramo && item.ramo !== ramo) return false;
+      if (cleanUf && item.uf.toUpperCase() !== cleanUf) return false;
+      if (cleanKeyword) {
+        const searchable = [item.tradeName, item.companyName, item.cnpj].join(' ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (!searchable.includes(cleanKeyword)) return false;
+      }
+      return true;
     });
   }
 
-  return results;
+  const safeCount = Math.min(Math.max(Number(count) || 50, 1), 500);
+  const selected = filtered.slice(0, safeCount);
+
+  return selected.map((item, idx) => ({
+    id: `lead_${item.cnpj.replace(/\D/g, '') || Date.now() + '_' + idx}`,
+    userId: userId || null,
+    userName: userName || null,
+    ramo: item.ramo,
+    ramoLabel: ramoConfig.shortLabel || item.ramo,
+    tradeName: item.tradeName,
+    companyName: item.companyName,
+    cnpj: item.cnpj,
+    phone: item.phone,
+    whatsapp: item.whatsapp || item.phone,
+    email: item.email || `contato@${item.tradeName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com.br`,
+    website: item.website || `www.${item.tradeName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com.br`,
+    street: item.street,
+    number: item.number,
+    neighborhood: item.neighborhood,
+    city: item.city,
+    state: item.uf,
+    cep: item.cep,
+    estimatedScreens: item.estimatedScreens,
+    screensCount: item.screensCount,
+    contactPerson: item.contactPerson,
+    skySolution: item.skySolution || ramoConfig.skyPitch,
+    cnae: item.cnae || ramoConfig.cnaes[0],
+    status: 'NOVO',
+    visitDate: null,
+    visitNotes: null,
+    callCount: 0,
+    lastCallAt: null,
+    notes: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }));
 }
 
 function seedInitialLeads(db) {
-  // Gera leads de demonstração atribuídos tanto ao Adm quanto ao Vendedor Lucas
-  const leadsAdm = generateLeadsForSearch({
-    ramo: 'hoteis',
-    uf: 'SP',
-    city: 'São Paulo',
-    count: 5,
+  // Pega leads reais diretamente da base oficial para inicialização
+  const realHospitais = REAL_LEADS_DATABASE.filter(l => l.ramo === 'hospitais');
+  const realHoteis = REAL_LEADS_DATABASE.filter(l => l.ramo === 'hoteis');
+
+  const leadsAdm = realHospitais.slice(0, 3).map((item, idx) => ({
+    id: `lead_seed_adm_${item.cnpj.replace(/\D/g, '')}`,
     userId: 'usr_admin_default',
-    userName: 'Saulo (Administrador SKY)'
-  });
-
-  const leadsHospitaisAdm = generateLeadsForSearch({
-    ramo: 'hospitais',
-    uf: 'SP',
-    city: 'São Paulo',
-    count: 3,
-    userId: 'usr_admin_default',
-    userName: 'Saulo (Administrador SKY)'
-  });
-
-  const leadsVendedor = generateLeadsForSearch({
-    ramo: 'bares_restaurantes',
-    uf: 'RJ',
-    city: 'Rio de Janeiro',
-    count: 6,
-    userId: 'usr_vendedor_1',
-    userName: 'Lucas Pereira (Vendedor)'
-  });
-
-  // Marca um lead do vendedor com visita agendada para demonstrar a agenda
-  leadsVendedor[0].status = 'AGENDADO';
-  leadsVendedor[0].visitDate = new Date(Date.now() + 86400000 * 2).toISOString().slice(0, 16); // Daqui a 2 dias
-  leadsVendedor[0].visitNotes = 'Reunião confirmada com Gerente Geral para apresentar plano de 18 telas esportivas SKY';
-  leadsVendedor[0].callCount = 2;
-  leadsVendedor[0].notes.push({
-    id: 'note_1',
-    text: 'Primeira ligação: secretária pediu para ligar após às 14h.',
-    createdAt: new Date(Date.now() - 86400000).toISOString(),
-    userName: 'Lucas Pereira (Vendedor)'
-  });
-  leadsVendedor[0].notes.push({
-    id: 'note_2',
-    text: 'Segunda ligação: falei com o gerente. Demonstrou interesse no Brasileirão e UFC. Visita agendada.',
+    userName: 'Saulo (Administrador SKY)',
+    ramo: item.ramo,
+    ramoLabel: 'Hospitais & Saúde',
+    tradeName: item.tradeName,
+    companyName: item.companyName,
+    cnpj: item.cnpj,
+    phone: item.phone,
+    whatsapp: item.whatsapp,
+    email: item.email,
+    website: item.website,
+    street: item.street,
+    number: item.number,
+    neighborhood: item.neighborhood,
+    city: item.city,
+    state: item.uf,
+    cep: item.cep,
+    estimatedScreens: item.estimatedScreens,
+    screensCount: item.screensCount,
+    contactPerson: item.contactPerson,
+    skySolution: item.skySolution,
+    cnae: item.cnae,
+    status: 'NOVO',
+    visitDate: null,
+    visitNotes: null,
+    callCount: 0,
+    lastCallAt: null,
+    notes: [],
     createdAt: new Date().toISOString(),
-    userName: 'Lucas Pereira (Vendedor)'
-  });
+    updatedAt: new Date().toISOString()
+  }));
 
-  db.leads = [...leadsAdm, ...leadsHospitaisAdm, ...leadsVendedor];
+  const leadsVendedor = realHoteis.slice(0, 3).map((item, idx) => ({
+    id: `lead_seed_vend_${item.cnpj.replace(/\D/g, '')}`,
+    userId: 'usr_vendedor_1',
+    userName: 'Lucas Pereira (Vendedor)',
+    ramo: item.ramo,
+    ramoLabel: 'Hotelaria & Pousadas',
+    tradeName: item.tradeName,
+    companyName: item.companyName,
+    cnpj: item.cnpj,
+    phone: item.phone,
+    whatsapp: item.whatsapp,
+    email: item.email,
+    website: item.website,
+    street: item.street,
+    number: item.number,
+    neighborhood: item.neighborhood,
+    city: item.city,
+    state: item.uf,
+    cep: item.cep,
+    estimatedScreens: item.estimatedScreens,
+    screensCount: item.screensCount,
+    contactPerson: item.contactPerson,
+    skySolution: item.skySolution,
+    cnae: item.cnae,
+    status: idx === 0 ? 'AGENDADO' : 'NOVO',
+    visitDate: idx === 0 ? new Date(Date.now() + 86400000 * 2).toISOString().slice(0, 16) : null,
+    visitNotes: idx === 0 ? 'Reunião agendada com Gerência Geral para demonstração SKY B2B' : null,
+    callCount: idx === 0 ? 1 : 0,
+    lastCallAt: idx === 0 ? new Date().toISOString() : null,
+    notes: idx === 0 ? [{
+      id: 'note_1',
+      text: 'Contato telefônico com recepção/gerência confirmando visita técnica.',
+      createdAt: new Date().toISOString(),
+      userName: 'Lucas Pereira (Vendedor)'
+    }] : [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }));
+
+  db.leads = [...leadsAdm, ...leadsVendedor];
 }
